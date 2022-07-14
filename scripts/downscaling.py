@@ -13,6 +13,9 @@ import multiprocessing as mp
 from functools import partial   
 from math import isnan
 
+#imports from directory
+from proxy_smoothing import proxy_smoother
+
 def chunks(l, n):
     n = max(1, n)
     return (l[i:i+n] for i in range(0, len(l), n))
@@ -89,11 +92,11 @@ def main():
     #print("DEM res:",xres,  yres)
     #### bbox Dimensions in degrees
     #[latmin, lonmin, latmax, lonmax]
-    bbox = [-124, 48,-122,50] # Vancouver
+    #bbox = [-124, 48,-122,50] # Vancouver
     #bbox = [-126, 22,-71, 50] # USA 
     #bbox = [-180, -90,-34,90] # americas
     #bbox = [-115, 37,-108, 40] # Utah, US 
-    #bbox = [-76,-56,-63,-46] # Cap Hoorn
+    bbox = [-76,-56,-63,-46] # Cap Hoorn
     #bbox = [ulx, uly-180, ulx+360, uly] # globe 
     
     #inv_geotransform = gdal.InvGeoTransform(americas_ref_ds.GetGeoTransform()) #to get x/y pixel dimensions from degrees # change back to america if used as bbox
@@ -155,61 +158,16 @@ def main():
     end_clipping = time.time()
     print("Clipping time: ", end_clipping-start_clipping)
     ################# CALCULATIONS #######################
+    
+    # proxy raster smoothing
     start_proxy = time.time()
-    ###### NPP proxy map smoothing ###### 
-    matrix30s_size = 60 #in 30min are 60x30sec Pixels
     
-    #for offset in pbar(range(0,matrix30s_size)): #for loop with progress bar
-    for offset in range(0,matrix30s_size):
-        
-        proxy_dev = np.empty(proxy.shape)
-        proxy_dev.fill(0)
-        
-        for y in range(offset,proxy.shape[0], matrix30s_size): #iterates with 30min steps in the 30sec raster. 
-            for x in range(offset, proxy.shape[1], matrix30s_size):
-                
-                #calc of 30min value (area weighted)
-                sum_prod = np.nansum(
-                    np.multiply(
-                        proxy[y:y+matrix30s_size,x:x+matrix30s_size],
-                        land[y:y+matrix30s_size,x:x+matrix30s_size]
-                        ))
-                
-                sqkm_sum = np.nansum(land[y:y+matrix30s_size,x:x+matrix30s_size][~np.isnan(proxy[y:y+matrix30s_size,x:x+matrix30s_size])])
-                proxy_30min =sum_prod/sqkm_sum
-                
-                #deviations of 30sec proxy values from pointer 30min value
-                proxy_dev[y:y+matrix30s_size,x:x+matrix30s_size] = proxy[y:y+matrix30s_size,x:x+matrix30s_size]/proxy_30min
-                
-        if offset == 0:
-            proxy_offset_collector = proxy_dev
-        else:
-            proxy_offset_collector = proxy_offset_collector + proxy_dev
-    
-    proxy_dev = None
-    proxy = None
-    
-    proxy_smooth = np.empty(dgvm.shape)
-    proxy_smooth.fill(0)
-    
-    #edge boundaries
-    for i in range(0,matrix30s_size):
-        proxy_smooth[i,matrix30s_size:] = proxy_offset_collector[i,matrix30s_size:]/(i+1)
-        proxy_smooth[matrix30s_size:,i] = proxy_offset_collector[matrix30s_size:,i]/(i+1)
-    
-    mean_index = np.indices((matrix30s_size,matrix30s_size))
-    mean_factor = np.empty(mean_index.shape)
-    mean_factor = np.minimum(mean_index[0], mean_index[1])+1
-    
-    proxy_smooth[:matrix30s_size,:matrix30s_size] = proxy_offset_collector[:matrix30s_size,:matrix30s_size]/mean_factor 
-    proxy_smooth[matrix30s_size:,matrix30s_size:] = proxy_offset_collector[matrix30s_size:,matrix30s_size:]/matrix30s_size
-    
-    proxy_offset_collector = None
+    proxy_smooth = proxy_smoother(60,proxy,land,dgvm)
     
     end_proxy = time.time()
     print("Proxy map time: ", end_proxy-start_proxy)
-    ###### dgvm Downscaling######
     
+    ###### dgvm Downscaling######
     # load smoothed dgvm
     dgvm_smooth = dgvm_smooth_ds.ReadAsArray(int(x0), int(y0), int(x1-x0), int(y1-y0))
     
